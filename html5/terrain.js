@@ -6,40 +6,53 @@ const ctx = canvas.getContext('2d');
 	canvas.height = window.innerHeight;
 })();
 
-let currentX = 33322;
-let currentY = 35273;
+let current = { x: 33322, y: 35273 };
+let rotation = 0;
+let cos = 1;
+let sin = 0;
 let scale = 8;
-const step = 16;
 let hashCount;
 
 const normal = {
 	snow:	{r:255, g:255, b:255},
-	rocks:	{r:60, g:60, b:120},
-	land:	{r:0, g:255, b:0},
+	rocks:	{r:128, g:128, b:192},
+	land:	{r:0, g:224, b:0},
 	beach:	{r:255, g:255, b:0},
-	sea:	{r:1, g:128, b:255}
+	sea:	{r:1, g:128, b:192}
 };
 
 const dark = {
-	snow:	{r:128, g:128, b:128},
-	rocks:	{r:30, g:30, b:60},
-	land:	{r:0, g:128, b:0},
-	beach:	{r:128, g:128, b:0},
-	sea:	{r:1, g:128, b:255}
+	snow:	{r:64, g:64, b:64},
+	rocks:	{r:32, g:32, b:48},
+	land:	{r:0, g:160, b:0},
+	beach:	{r:192, g:192, b:0},
+	sea:	{r:1, g:128, b:192}
 };
 
 window.onkeydown = function(e) {
 	switch (e.keyCode) {
-		case 37: currentX -= step * scale; break;	// left
-		case 38: currentY += step * scale; break;	// up
-		case 39: currentX += step * scale; break;	// right
-		case 40: currentY -= step * scale; break;	// down
+		case 37: move(-16, 0); break;	// left
+		case 38: move(0, -16); break;	// up
+		case 39: move(16, 0); break;	// right
+		case 40: move(0, 16); break;	// down
 		case 65: scale /= 1.125; break;	// A = zoom in
 		case 90: scale *= 1.125; break;	// Z = zoom out
+		case 81: turn(5); break;	// Q = rotate left
+		case 87: turn(355); break;	// W = rotate right
 		case 72: toggleDialog('help'); break;	// H = toggle help
 		case 73: toggleDialog('info'); break;	// I = toggle info
 	}
 };
+
+function move(dx, dy) {
+	current = pixel({x:dx, y:dy});
+}
+
+function turn(degrees) {
+	const rad = (rotation = (rotation + degrees) % 360) * Math.PI / 180;
+	cos = Math.cos(rad);
+	sin = Math.sin(rad);
+}
 
 let lastTime = 0;
 
@@ -47,38 +60,38 @@ let lastTime = 0;
 	requestAnimationFrame(loop);
 
 	hashCount = 0;
-	const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-	const data = imageData.data;
 	const width = canvas.width;
 	const height = canvas.height;
+	const imageData = ctx.getImageData(0, 0, width, height);
+	const data = imageData.data;
 	const startX = -width >> 1;
 	const startY = -height >> 1;
 	const endX = startX + width;
 	const endY = startY + height;
-	let i = 0;
-	let h;
-	const p = {};
-	const row = [];
-	for (p.x = startX; p.x < endX; p.x++) {
-		row[p.x] = calculateHeight(p);
+	const p = {x: startX - 1, y: startY - 1};
+	const above = [];
+	while (++p.x < endX) {
+		above[p.x] = calculateHeight(p);
 	}
-	for (p.y = startY; p.y < endY; p.y++) {
-		p.x = -1;
+	let i = 0;
+	while (++p.y < endY) {
+		p.x = startX - 1;
 		let left = calculateHeight(p);
-		for (p.x = startX; p.x < endX; p.x++) {
-			h = calculateHeight(p);
-			const c = color(h, h - left, h - row[p.x]);
+		while (++p.x < endX) {
+			const h = calculateHeight(p);
+			const c = material(h, h - left, h - above[p.x]);
 			data[i++] = c.r;
 			data[i++] = c.g;
 			data[i++] = c.b;
 			data[i++] = 255;
-			row[p.x] = left = h;
+			above[p.x] = left = h;
 		}
 	}
 	ctx.putImageData(imageData, 0, 0);
 
 	const duration = time - lastTime;
-	setInfo('center', Math.floor(currentX) + ', ' + Math.floor(currentY));
+	setInfo('center', Math.floor(current.x) + ', ' + Math.floor(current.y));
+	setInfo('rotation', rotation);
 	setInfo('scale', scale.toFixed(3));
 	setInfo('pixels', i >> 2);
 	setInfo('hashes', hashCount);
@@ -96,15 +109,13 @@ function summedHashes(p) {
 	let near = 0;
 	let far = 0;
 	let corner = 0;
-	let depth;
-	for (depth = 12; depth >= 0; depth--) {
+	for (let depth = 12; depth >= 0; depth--) {
 		const mask = (1 << depth) - 1;
-		const internalX = x & mask;
-		const internalY = y & mask;
 		const cellX = (x >> depth) & 0xFFFF;
 		const cellY = (y >> depth) & 0xFFFF;
 		const anchorX = cellX & 1;
 		const anchorY = cellY & 1;
+		const direction = (x & mask) <= (y & mask);
 
 		if (anchorX == 0 && anchorY == 0) {
 			far += near;
@@ -120,10 +131,7 @@ function summedHashes(p) {
 			const center = near + far;
 			near += corner;
 			far += corner;
-			if (internalX < internalY && anchorX == 1) {
-				corner = center;
-			}
-			else if (internalX > internalY && anchorY == 1) {
+			if (direction == anchorX) {
 				corner = center;
 			}
 			else {
@@ -133,30 +141,27 @@ function summedHashes(p) {
 
 		near += hash(cellX, cellY, depth);
 		far += hash(cellX + 1, cellY + 1, depth);
-		if (internalX < internalY) {
-			corner += hash(cellX, cellY + 1, depth);
-		}
-		else {
-			corner += hash(cellX + 1, cellY, depth);
-		}
+		corner += direction
+			? hash(cellX, cellY + 1, depth)
+			: hash(cellX + 1, cellY, depth);
 	}
 	x %= 1;
 	y %= 1;
 	return near + (corner - near) * Math.max(x, y) + (far - corner) * Math.min(x, y);
 }
 
-function color(h, s1, s2) {
-	const rgb = s1 + s2 >= 0 ? normal : dark;
-	return h > 8100 ? rgb.snow :
-		h > 7500 ? rgb.rocks :
-		h > 5500 ? rgb.land :
-		h > 5400 ? rgb.beach : rgb.sea;
+function material(height, shade1, shade2) {
+	const rgb = shade1 + shade2 >= 0 ? normal : dark;
+	return height > 8000 ? rgb.snow :
+		height > 7200 ? rgb.rocks :
+		height > 5500 ? rgb.land :
+		height > 5400 ? rgb.beach : rgb.sea;
 }
 
 function pixel(p) {
 	return {
-		x: currentX + p.x * scale,
-		y: currentY - p.y * scale
+		x: current.x + scale * (p.x * cos + p.y * sin),
+		y: current.y + scale * (p.x * sin - p.y * cos)
 	};
 }
 
