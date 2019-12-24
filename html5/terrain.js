@@ -11,6 +11,7 @@ let rotation = 0;
 let cos = 1;
 let sin = 0;
 let scale = 8;
+let crosshair = true;
 let hashCount;
 
 const normal = {
@@ -39,6 +40,7 @@ window.onkeydown = function(e) {
 		case 90: scale *= 1.125; break;	// Z = zoom out
 		case 81: turn(5); break;	// Q = rotate left
 		case 87: turn(355); break;	// W = rotate right
+		case 67: crosshair = !crosshair; break;	// C = toggle crosshair
 		case 72: toggleDialog('help'); break;	// H = toggle help
 		case 73: toggleDialog('info'); break;	// I = toggle info
 	}
@@ -87,6 +89,19 @@ let lastTime = 0;
 			above[p.x] = left = h;
 		}
 	}
+	if (crosshair && width >= 16 && height >= 16) {
+		const paint = function(x, y) {
+			const j = 4 * (x - startX + width * (y - startY));
+			data[j] = 255;
+			data[j+1] = data[j+2] = 0;
+		}
+		for (let d = -8; d < 8; d++) {
+			paint(0, d);
+			paint(-1, d);
+			paint(d, 0);
+			paint(d, 1);
+		}
+	}
 	ctx.putImageData(imageData, 0, 0);
 
 	const duration = time - lastTime;
@@ -110,12 +125,13 @@ function summedHashes(p) {
 	let far = 0;
 	let corner = 0;
 	for (let depth = 12; depth >= 0; depth--) {
-		const mask = (1 << depth) - 1;
+		const divisor = 1 << depth;
 		const cellX = (x >> depth) & 0xFFFF;
 		const cellY = (y >> depth) & 0xFFFF;
 		const anchorX = cellX & 1;
 		const anchorY = cellY & 1;
-		const direction = (x & mask) <= (y & mask);
+		// Similar to 'simplicial subdivision' in simplex noise
+		const subdivision = x % divisor < y % divisor ? 1 : 0;
 
 		if (anchorX == 0 && anchorY == 0) {
 			far += near;
@@ -131,7 +147,7 @@ function summedHashes(p) {
 			const center = near + far;
 			near += corner;
 			far += corner;
-			if (direction == anchorX) {
+			if (subdivision == anchorX) {
 				corner = center;
 			}
 			else {
@@ -141,7 +157,7 @@ function summedHashes(p) {
 
 		near += hash(cellX, cellY, depth);
 		far += hash(cellX + 1, cellY + 1, depth);
-		corner += direction
+		corner += subdivision
 			? hash(cellX, cellY + 1, depth)
 			: hash(cellX + 1, cellY, depth);
 	}
@@ -165,6 +181,7 @@ function pixel(p) {
 	};
 }
 
+// Similar to 'coordinate skewing' in simplex noise
 function skew(p) {
 	const d = (p.x + p.y) * 0.3660254037844386;
 	return {
