@@ -7,7 +7,6 @@ const ctx = canvas.getContext('2d');
 })();
 
 let current = { x: 33322, y: 35273 };
-//let current = { x: 573602, y:-382361 };	// TODO: glitch
 let rotation = 0;
 let cos = 1;
 let sin = 0;
@@ -117,14 +116,17 @@ function summedHashes(p) {
 	let near = 0;
 	let far = 0;
 	let corner = 0;
+	let internalX, internalY;
 	for (let depth = 12; depth >= 0; depth--) {
 		const divisor = 1 << depth;
-		const cellX = (x >> depth) & 0xFFFF;
-		const cellY = (y >> depth) & 0xFFFF;
+		const cellX = Math.floor(x / divisor);
+		const cellY = Math.floor(y / divisor);
 		const anchorX = cellX & 1;
 		const anchorY = cellY & 1;
 		// Similar to 'simplicial subdivision' in simplex noise
-		const subdivision = x % divisor < y % divisor ? 1 : 0;
+		internalX = x - cellX * divisor;
+		internalY = y - cellY * divisor;
+		const subdivision = internalX < internalY ? 1 : 0;
 
 		if (anchorX == 0 && anchorY == 0) {
 			far += near;
@@ -154,9 +156,7 @@ function summedHashes(p) {
 			? hash(cellX, cellY + 1, depth)
 			: hash(cellX + 1, cellY, depth);
 	}
-	x %= 1;
-	y %= 1;
-	return near + (corner - near) * Math.max(x, y) + (far - corner) * Math.min(x, y);
+	return near + (corner - near) * Math.max(internalX, internalY) + (far - corner) * Math.min(internalX, internalY);
 }
 
 function material(height, s1, s2) {
