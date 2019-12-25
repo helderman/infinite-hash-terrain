@@ -7,6 +7,7 @@ const ctx = canvas.getContext('2d');
 })();
 
 let current = { x: 33322, y: 35273 };
+//let current = { x: 573602, y:-382361 };	// TODO: glitch
 let rotation = 0;
 let cos = 1;
 let sin = 0;
@@ -14,19 +15,11 @@ let scale = 8;
 let crosshair = true;
 let hashCount;
 
-const normal = {
+const colors = {
 	snow:	{r:255, g:255, b:255},
 	rocks:	{r:128, g:128, b:192},
 	land:	{r:0, g:224, b:0},
 	beach:	{r:255, g:255, b:0},
-	sea:	{r:1, g:128, b:192}
-};
-
-const dark = {
-	snow:	{r:64, g:64, b:64},
-	rocks:	{r:32, g:32, b:48},
-	land:	{r:0, g:160, b:0},
-	beach:	{r:192, g:192, b:0},
 	sea:	{r:1, g:128, b:192}
 };
 
@@ -81,7 +74,7 @@ let lastTime = 0;
 		let left = calculateHeight(p);
 		while (++p.x < endX) {
 			const h = calculateHeight(p);
-			const c = material(h, h - left, h - above[p.x]);
+			const c = material(h, (h - left) / scale, (h - above[p.x]) / scale);
 			data[i++] = c.r;
 			data[i++] = c.g;
 			data[i++] = c.b;
@@ -166,12 +159,25 @@ function summedHashes(p) {
 	return near + (corner - near) * Math.max(x, y) + (far - corner) * Math.min(x, y);
 }
 
-function material(height, shade1, shade2) {
-	const rgb = shade1 + shade2 >= 0 ? normal : dark;
-	return height > 8000 ? rgb.snow :
-		height > 7200 ? rgb.rocks :
-		height > 5500 ? rgb.land :
-		height > 5400 ? rgb.beach : rgb.sea;
+function material(height, s1, s2) {
+	if (height < 5400) {
+		return colors.sea;
+	}
+	else {
+		return shade((10 + s1 + s2) / Math.sqrt(100 + s1*s1 + s2*s2),
+			height > 8000 ? colors.snow :
+			height > 7200 ? colors.rocks :
+			height > 5500 ? colors.land : colors.beach);
+	}
+}
+
+function shade(inprod, rgb) {
+	const f = (inprod + 1) / 2;
+	return {
+		r: f * rgb.r,
+		g: f * rgb.g,
+		b: f * rgb.b
+	};
 }
 
 function pixel(p) {
