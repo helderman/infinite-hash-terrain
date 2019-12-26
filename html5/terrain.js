@@ -6,11 +6,13 @@ const ctx = canvas.getContext('2d');
 	canvas.height = window.innerHeight;
 })();
 
-let current = { x: 33322, y: 35273 };
+let current = { x: 0.0, y: 0.0 };
 let rotation = 0;
-let cos = 1;
-let sin = 0;
-let scale = 8;
+let cos = 1.0;
+let sin = 0.0;
+let scale = 8.0;
+let detail = 0;
+let seabed = false;
 let crosshair = true;
 let hashCount;
 
@@ -28,10 +30,13 @@ window.onkeydown = function(e) {
 		case 38: move(0, -16); break;	// up
 		case 39: move(16, 0); break;	// right
 		case 40: move(0, 16); break;	// down
-		case 65: scale /= 1.125; break;	// A = zoom in
-		case 90: scale *= 1.125; break;	// Z = zoom out
 		case 81: turn(5); break;	// Q = rotate left
 		case 87: turn(355); break;	// W = rotate right
+		case 65: scale /= 1.125; break;	// A = zoom in
+		case 90: scale *= 1.125; break;	// Z = zoom out
+		case 83: if (detail > 0) detail -= 1; break;	// S = more detail
+		case 88: if (detail < 16) detail += 1; break;	// X = less detail
+		case 66: seabed = !seabed; break;	// B = toggle seabed
 		case 67: crosshair = !crosshair; break;	// C = toggle crosshair
 		case 72: toggleDialog('help'); break;	// H = toggle help
 		case 73: toggleDialog('info'); break;	// I = toggle info
@@ -100,6 +105,7 @@ let lastTime = 0;
 	setInfo('center', Math.floor(current.x) + ', ' + Math.floor(current.y));
 	setInfo('rotation', rotation);
 	setInfo('scale', scale.toFixed(3));
+	setInfo('detail', detail);
 	setInfo('pixels', i >> 2);
 	setInfo('hashes', hashCount);
 	setInfo('fps', duration ? (1000 / duration).toFixed(2) : '');
@@ -117,7 +123,7 @@ function summedHashes(p) {
 	let far = 0;
 	let corner = 0;
 	let internalX, internalY;
-	for (let depth = 12; depth >= 0; depth--) {
+	for (let depth = 16; depth >= 0; depth--) {
 		const divisor = 1 << depth;
 		const cellX = Math.floor(x / divisor);
 		const cellY = Math.floor(y / divisor);
@@ -150,29 +156,39 @@ function summedHashes(p) {
 			}
 		}
 
-		near += hash(cellX, cellY, depth);
-		far += hash(cellX + 1, cellY + 1, depth);
-		corner += subdivision
-			? hash(cellX, cellY + 1, depth)
-			: hash(cellX + 1, cellY, depth);
+		if (depth >= detail) {
+			near += hash(cellX, cellY, depth);
+			far += hash(cellX + 1, cellY + 1, depth);
+			corner += subdivision
+				? hash(cellX, cellY + 1, depth)
+				: hash(cellX + 1, cellY, depth);
+		}
+		else {
+			near += 0.5;
+			far += 0.5;
+			corner += 0.5;
+		}
 	}
-	return near + (corner - near) * Math.max(internalX, internalY) + (far - corner) * Math.min(internalX, internalY);
+	const internalCorner = Math.max(internalX, internalY);
+	const internalFar = Math.min(internalX, internalY);
+	return (near + (corner - near) * internalCorner + (far - corner) * internalFar);
 }
 
 function material(height, s1, s2) {
-	if (height < 5400) {
-		return colors.sea;
+	if (seabed || height > 91000) {
+		return shade((10 + s1 + s2) / Math.sqrt(100 + s1*s1 + s2*s2),
+			height > 125000 ? colors.snow :
+			height > 110000 ? colors.rocks :
+			height > 91200 ? colors.land :
+			height > 91000 ? colors.beach : colors.sea);
 	}
 	else {
-		return shade((10 + s1 + s2) / Math.sqrt(100 + s1*s1 + s2*s2),
-			height > 8000 ? colors.snow :
-			height > 7200 ? colors.rocks :
-			height > 5500 ? colors.land : colors.beach);
+		return colors.sea;
 	}
 }
 
-function shade(inprod, rgb) {
-	const f = (inprod + 1) / 2;
+function shade(dotproduct, rgb) {
+	const f = (dotproduct + 1) / 2;
 	return {
 		r: f * rgb.r,
 		g: f * rgb.g,
@@ -203,6 +219,7 @@ function hash(x, y, depth) {
 }
 
 function parity(n) {
+	n ^= n >> 16;
 	n ^= n >> 8;
 	n ^= n >> 4;
 	n ^= n >> 2;
