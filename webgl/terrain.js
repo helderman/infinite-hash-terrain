@@ -167,7 +167,22 @@ function pixel(p) {
 	};
 }
 
-let lastTime = 0;
+const framerate = {
+	minDuration: 400,
+	rate: 0,
+	frameCount: 0,
+	fromTime: 0,
+	fps: function(time) {
+		const duration = time - this.fromTime;
+		this.frameCount++;
+		if (duration >= this.minDuration) {
+			this.rate = 1000 * this.frameCount / duration;
+			this.frameCount = 0;
+			this.fromTime = time;
+		}
+		return this.rate;
+	}
+};
 
 (function loop(time) {
 	requestAnimationFrame(loop);
@@ -186,15 +201,13 @@ let lastTime = 0;
 	gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
 	gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-	const duration = time - lastTime;
 	setInfo('center', format(current.x, 0) + ', ' + format(current.y, 0));
 	setInfo('rotation', rotation);
 	setInfo('scale', format(scale, 3));
 	setInfo('detail', detail);
 	setInfo('pixels', canvas.width * canvas.height);
-	setInfo('fps', duration ? (1000 / duration).toFixed(2) : '');
-	lastTime = time;
-})(lastTime);
+	setInfo('fps', framerate.fps(time).toFixed(0));
+})(0);
 
 function format(n, prec) {
 	return (n * (1 << 17)).toFixed(prec);
