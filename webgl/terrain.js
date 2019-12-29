@@ -5,6 +5,26 @@ let sin = 0.0;
 let scale = 0.0001;
 let detail = 0;
 
+const coloring = `
+
+precision lowp float;
+
+uniform sampler2D u_image;
+//uniform vec2 u_size;
+ 
+varying vec2 v_texCoord;
+
+void main() {
+	// TODO: colors, emboss
+	//vec2 onePixel = vec2(1.0, 1.0) / u_textureSize;
+	//gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+	//gl_FragColor = texture2D(u_image, vec2(0.0, 0.0));
+	gl_FragColor = texture2D(u_image, v_texCoord);
+	//texture2D(u_image, v_texCoord + vec2(onePixel.x, 0.0)) +
+	//texture2D(u_image, v_texCoord + vec2(-onePixel.x, 0.0))) / 3.0;
+}
+`;
+
 const heightmap = `
 
 precision lowp float;
@@ -86,7 +106,7 @@ void main() {
 	float internalCorner = max(internal.x, internal.y);
 	float internalFar = min(internal.x, internal.y);
 	float height = near * divisor + (corner - near) * internalCorner + (far - corner) * internalFar;
-	if (height < 91000.0 * divisor) height = 0.0;	// just for testing purposes
+	if (height < 91000.0 * divisor) height = 0.0;	// TODO: remove when everything else works
 	gl_FragColor = vec4(vec3(height), 1.0);
 }
 `;
@@ -94,8 +114,20 @@ void main() {
 const canvas = document.getElementById('canvas');
 const gl = canvas.getContext('webgl');
 const program = gl.createProgram();
+const program2 = gl.createProgram();
+const fbo = gl.createFramebuffer();
+const texture = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, texture);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+initProgram(program, heightmap);
+initProgram(program2, coloring);
 
-(function() {
+function initProgram(program, fragmentShaderSource) {
 	const buffer = gl.createBuffer();
 	gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
 	gl.bufferData(
@@ -106,15 +138,24 @@ const program = gl.createProgram();
 		gl.STATIC_DRAW);
 
 	gl.attachShader(program, loadShader(gl, gl.VERTEX_SHADER, `
-		attribute vec2 a_pos;
-		void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+		attribute vec2 a_position;
+		//attribute vec2 a_texCoord;
+		//uniform vec2 u_resolution;
+		varying vec2 v_texCoord;
+		void main() {
+			// TODO: correct coordinates
+			gl_Position = vec4(a_position, 0.0, 1.0);
+			v_texCoord = vec2(0.0, 0.0);
+			//gl_Position = vec4(a_position / u_resolution * 2.0 - 1.0, 0.0, 1.0);
+			//v_texCoord = a_texCoord;
+		}
 	`));
-	gl.attachShader(program, loadShader(gl, gl.FRAGMENT_SHADER, heightmap));
+	gl.attachShader(program, loadShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource));
 	gl.linkProgram(program);
 	if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
 		throw "Link error: " + gl.getProgramInfoLog(program);
 	}
-})();
+}
 
 function loadShader(gl, type, source) {
 	const shader = gl.createShader(type);
@@ -187,8 +228,17 @@ const framerate = {
 (function loop(time) {
 	requestAnimationFrame(loop);
 
+	// TODO: clean up the mess once everything works
+	//const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+	//if (status != gl.FRAMEBUFFER_COMPLETE) {
+	//	throw "Framebuffer incomplete: " + status + " / " + gl.FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
+	//}
+	gl.bindTexture(gl.TEXTURE_2D, texture);	// source = pipe from previous shader
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+	gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);	// destination = pipe to next shader
+	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+	gl.bindTexture(gl.TEXTURE_2D, null);	// source = none
 	gl.viewport(0, 0, canvas.width, canvas.height);
-
 	gl.useProgram(program);
 	gl.uniform2f(gl.getUniformLocation(program, "u_center"), canvas.width / 2, canvas.height / 2);
 	gl.uniform2f(gl.getUniformLocation(program, "u_position"), current.x, current.y);
@@ -196,9 +246,20 @@ const framerate = {
 	gl.uniform1f(gl.getUniformLocation(program, "u_scale"), scale);
 	gl.uniform1i(gl.getUniformLocation(program, "u_detail"), detail);
 
-	const positionLocation = gl.getAttribLocation(program, 'a_pos');
+	const positionLocation = gl.getAttribLocation(program, 'a_position');
 	gl.enableVertexAttribArray(positionLocation);
 	gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+	gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+	gl.bindFramebuffer(gl.FRAMEBUFFER, null);	// destination = canvas
+	gl.bindTexture(gl.TEXTURE_2D, texture);	// source = pipe from previous shader
+	gl.viewport(0, 0, canvas.width, canvas.height);
+	gl.useProgram(program2);
+	gl.uniform2f(gl.getUniformLocation(program2, "u_resolution"), canvas.width, canvas.height);
+
+	const positionLocation2 = gl.getAttribLocation(program2, 'a_position');
+	gl.enableVertexAttribArray(positionLocation2);
+	gl.vertexAttribPointer(positionLocation2, 2, gl.FLOAT, false, 0, 0);
 	gl.drawArrays(gl.TRIANGLES, 0, 6);
 
 	setInfo('center', format(current.x, 0) + ', ' + format(current.y, 0));
