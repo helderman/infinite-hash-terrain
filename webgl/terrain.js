@@ -19,7 +19,7 @@ uniform float u_scale;
  
 varying vec2 v_texCoord;
 
-const vec2 sun = vec2(0.8, 0.4);
+const vec3 sun = normalize(vec3(-1.0, 1.0, 2.0));
 
 const vec3 snow = vec3(1.0, 1.0, 1.0);
 const vec3 rocks = vec3(0.5, 0.5, 0.75);
@@ -29,11 +29,9 @@ const vec3 sea = vec3(0.0, 0.5, 0.75);
 
 void main() {
 	vec3 rgb;
-	float height = texture2D(u_image, v_texCoord).r;
+	float height = texture2D(u_image, v_texCoord).b;
 	if (height > 0.694) {
-		vec2 texCoordNW = v_texCoord - vec2(1.0, -1.0) / u_resolution;
-		float heightNW = texture2D(u_image, texCoordNW).r;
-		vec2 normal = normalize(vec2(height - heightNW, u_scale));
+		vec3 normal = normalize(vec3(texture2D(u_image, v_texCoord).rg, 1.0));
 		rgb = clamp(dot(normal, sun) * (
 			height > 0.95 ? snow :
 			height > 0.84 ? rocks :
@@ -57,6 +55,10 @@ uniform vec2 u_rotate;
 uniform float u_scale;
 uniform int u_detail;
 
+// skew: like 'coordinate skewing' in simplex noise
+const mat2 skew = mat2(1.3660254, 0.3660254, 0.3660254, 1.3660254);
+const mat2 unskew = mat2(0.7886751, -0.2113249, -0.2113249, 0.7886751);
+
 float parity(float n) {
 	float p = 0.0;
 	n = floor(n);
@@ -73,9 +75,8 @@ float hash(float x, float y, int depth) {
 }
 
 void main() {
-	// skew: like 'coordinate skewing' in simplex noise
-	mat2 skew = mat2(1.3660254, 0.3660254, 0.3660254, 1.3660254);
 	mat2 rotate = mat2(u_rotate.x, -u_rotate.y, u_rotate.y, u_rotate.x);
+	mat2 unrotate = mat2(u_rotate.x, u_rotate.y, -u_rotate.y, u_rotate.x);
 	vec2 position = skew * (u_position + rotate * u_scale * (gl_FragCoord.xy - u_center));
 	vec2 internal;
 	float near = 0.0;
@@ -90,15 +91,11 @@ void main() {
 		internal = mod(position, divisor);
 		float subdivision = step(internal.x, internal.y);
 
-		if (anchor.x == 0.0 && anchor.y == 0.0) {
-			far += near;
-			corner += near;
-			near += near;
-		}
-		else if (anchor.x != 0.0 && anchor.y != 0.0) {
-			near += far;
-			corner += far;
-			far += far;
+		if (anchor.x == anchor.y) {
+			float d = anchor.x == 0.0 ? near : far;
+			near += d;
+			far += d;
+			corner += d;
 		}
 		else {
 			float center = near + far;
@@ -125,10 +122,12 @@ void main() {
 			corner += 0.5;
 		}
 	}
-	float internalCorner = max(internal.x, internal.y);
-	float internalFar = min(internal.x, internal.y);
-	float height = near * divisor + (corner - near) * internalCorner + (far - corner) * internalFar;
-	gl_FragColor = vec4(vec3(height), 1.0);
+	vec2 slope = internal.x > internal.y
+		? vec2(corner - near, far - corner)
+		: vec2(far - corner, corner - near);
+	float height = near * divisor + dot(internal, slope);
+	vec2 normal = normalize(unrotate * unskew * -slope);
+	gl_FragColor = vec4(normal, height, 1.0);
 }
 `;
 
