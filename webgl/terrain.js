@@ -31,8 +31,8 @@ void main() {
 	vec3 rgb;
 	float height = texture2D(u_image, v_texCoord).b;
 	if (height > 0.694) {
-		vec3 normal = normalize(vec3(texture2D(u_image, v_texCoord).rg, 1.0));
-		rgb = clamp(dot(normal, sun) * (
+		vec3 normal = vec3(texture2D(u_image, v_texCoord).rg * 2.0 - 1.0, 1.0);
+		rgb = clamp((dot(normal, sun) + 1.0) / 2.0 * (
 			height > 0.95 ? snow :
 			height > 0.84 ? rocks :
 			height > 0.696 ? land :
@@ -126,8 +126,8 @@ void main() {
 		? vec2(corner - near, far - corner)
 		: vec2(far - corner, corner - near);
 	float height = near * divisor + dot(internal, slope);
-	vec2 normal = normalize(unrotate * unskew * -slope);
-	gl_FragColor = vec4(normal, height, 1.0);
+	vec2 normal = unrotate * unskew * slope / -4.0;
+	gl_FragColor = vec4((normal + vec2(1.0)) / 2.0, height, 1.0);
 }
 `;
 
