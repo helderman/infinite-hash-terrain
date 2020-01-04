@@ -1,64 +1,34 @@
-let current = { x: 0.0, y: 0.0 };
-let rotation = 0;
-let cos = 1.0;
-let sin = 0.0;
-let scale = 0.0001;
-let detail = 0;
+const fragmentShaderSource = `
 
-const canvas = document.getElementById('canvas');
-const gl = canvas.getContext('webgl');
-if (!gl) throw "WebGL not supported here";
-
-const coloring = `
+// ------------------------------------
+// GLSL code
+// ------------------------------------
 
 precision lowp float;
 
-uniform sampler2D u_image;
-uniform vec2 u_resolution;
-uniform float u_scale;
- 
-varying vec2 v_texCoord;
+uniform vec2 u_center;	// pixel coordinates
+uniform vec2 u_position;	// terrain coordinates
+uniform vec2 u_rotate;	// (cos, sin)
+uniform float u_scale;	// above 1.0, even continents are smaller than pixels
+uniform int u_detail;	// ranges from 0 (all flat) to 17 (full detail)
+uniform bool u_seabed;
 
+// Vector pointing in the direction of the sun.
 const vec3 sun = normalize(vec3(-1.0, 1.0, 2.0));
 
+// RGB color of landscape at different altitudes.
 const vec3 snow = vec3(1.0, 1.0, 1.0);
 const vec3 rocks = vec3(0.5, 0.5, 0.75);
 const vec3 land = vec3(0.0, 0.875, 0.0);
 const vec3 beach = vec3(1.0, 1.0, 0.0);
 const vec3 sea = vec3(0.0, 0.5, 0.75);
 
-void main() {
-	vec3 rgb;
-	float height = texture2D(u_image, v_texCoord).b;
-	if (height > 0.694) {
-		vec3 normal = vec3(texture2D(u_image, v_texCoord).rg * 2.0 - 1.0, 1.0);
-		rgb = clamp((dot(normal, sun) + 1.0) / 2.0 * (
-			height > 0.95 ? snow :
-			height > 0.84 ? rocks :
-			height > 0.696 ? land :
-			height > 0.694 ? beach : sea), 0.0, 1.0);
-	}
-	else {
-		rgb = sea;
-	}
-	gl_FragColor = vec4(rgb, 1.0);
-}
-`;
-
-const heightmap = `
-
-precision lowp float;
-
-uniform vec2 u_center;
-uniform vec2 u_position;
-uniform vec2 u_rotate;
-uniform float u_scale;
-uniform int u_detail;
-
-// skew: like 'coordinate skewing' in simplex noise
+// Skew: like 'coordinate skewing' in simplex noise.
 const mat2 skew = mat2(1.3660254, 0.3660254, 0.3660254, 1.3660254);
 const mat2 unskew = mat2(0.7886751, -0.2113249, -0.2113249, 0.7886751);
 
+// Identical to (bitCount(n) & 1) in higher versions of GLSL
+// (assuming its integers are wide enough).
 float parity(float n) {
 	float p = 0.0;
 	n = floor(n);
@@ -70,8 +40,9 @@ float parity(float n) {
 	return mod(p, 2.0);
 }
 
+// One-bit pseudo-random value.
 float hash(float x, float y, int depth) {
-	return parity(563.0 * x + 761.0 * y + float(depth));
+	return parity(563.0 * x + 761.0 * y + float(16 - depth));
 }
 
 void main() {
@@ -83,14 +54,16 @@ void main() {
 	float far = 0.0;
 	float corner = 0.0;
 	float divisor = 1.0;
-	for (int depth = 16; depth >= 0; depth--) {
+	for (int depth = 0; depth < 17; depth++) {
 		divisor /= 2.0;
 		vec2 cell = floor(position / divisor);
 		vec2 anchor = mod(cell, 2.0);
-		// subdivision: like 'simplicial subdivision' in simplex noise
+		// Subdivision: like 'simplicial subdivision' in simplex noise.
 		internal = mod(position, divisor);
 		float subdivision = step(internal.x, internal.y);
 
+		// Reduce the current triangle to 1/4 (half its width).
+		// At the same time, double the contribution of all previous iterations.
 		if (anchor.x == anchor.y) {
 			float d = anchor.x == 0.0 ? near : far;
 			near += d;
@@ -108,8 +81,8 @@ void main() {
 				corner += corner;
 			}
 		}
-
-		if (depth >= u_detail) {
+		// Randomly put 'peaks' on the triangle's vertices
+		if (depth < u_detail) {
 			near += hash(cell.x, cell.y, depth);
 			far += hash(cell.x + 1.0, cell.y + 1.0, depth);
 			corner += subdivision != 0.0
@@ -122,107 +95,152 @@ void main() {
 			corner += 0.5;
 		}
 	}
+
+	// Interpolate between the vertices of the final (small) triangle.
 	vec2 slope = internal.x > internal.y
 		? vec2(corner - near, far - corner)
 		: vec2(far - corner, corner - near);
+	vec3 normal = normalize(vec3(unrotate * unskew * -slope, 1.0));
 	float height = near * divisor + dot(internal, slope);
-	vec2 normal = unrotate * unskew * slope / -4.0;
-	gl_FragColor = vec4((normal + vec2(1.0)) / 2.0, height, 1.0);
+
+	// Colors, shaded.
+	vec3 rgb;
+	if (u_seabed || height > 0.6942749) {
+		rgb = clamp(mix(0.5, 1.0, dot(normal, sun)) * (
+			height > 0.95 ? snow :
+			height > 0.84 ? rocks :
+			height > 0.696 ? land :
+			height > 0.6942749 ? beach : sea), 0.0, 1.0);
+	}
+	else {
+		rgb = sea;
+	}
+	gl_FragColor = vec4(rgb, 1.0);
 }
 `;
 
-const program = constructProgram(gl, heightmap);
-const program2 = constructProgram(gl, coloring);
+// ------------------------------------
+// JavaScript code
+// ------------------------------------
 
-const fbo = gl.createFramebuffer();
-const texture = gl.createTexture();
-gl.bindTexture(gl.TEXTURE_2D, texture);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-// Create a buffer containing 6 points (2 vertices);
-// this is input for the vertex shaders.
-const positionBuffer = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-gl.bufferData(
-	gl.ARRAY_BUFFER,
-	new Float32Array([
-		-1.0, -1.0, 1.0, -1.0, -1.0, 1.0,
-		-1.0,  1.0, 1.0, -1.0,  1.0, 1.0 ]),
-	gl.STATIC_DRAW);
+const current = {
+	x: 0,
+	y: 0,
+	rotation: 0,
+	cos: 1.0,
+	sin: 0.0,
+	scale: 1 / (1 << 14),	// yes, the terrain coordinates are tiny!
+	detail: 17,
+	seabed: false,	// makes sea surface transparent (false) or opaque (true)
 
-function constructProgram(gl, fragmentShaderSource) {
-	const program = gl.createProgram();
-	gl.attachShader(program, loadShader(gl, gl.VERTEX_SHADER, `
-		attribute vec2 a_position;	// clip space [-1, +1]
-		varying vec2 v_texCoord;
-		void main() {
-			gl_Position = vec4(a_position, 0.0, 1.0);
-			v_texCoord = (a_position + 1.0) / 2.0;	// texel coordinates [0, 1]
-		}
-	`));
-	gl.attachShader(program, loadShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource));
-	gl.linkProgram(program);
-	if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-		throw "Link error: " + gl.getProgramInfoLog(program);
+	move: function (dx, dy) {
+		this.x += this.scale * (dx * this.cos + dy * this.sin);
+		this.y += this.scale * (-dx * this.sin + dy * this.cos);
+	},
+	turn: function(degrees) {
+		const rad = (this.rotation = (this.rotation + degrees) % 360) * Math.PI / 180;
+		this.cos = Math.cos(rad);
+		this.sin = Math.sin(rad);
+	},
+	lessDetail: function() {
+		if (this.detail > 0) this.detail -= 1;
+	},
+	moreDetail: function() {
+		if (this.detail < 17) this.detail += 1;
 	}
-	return program;
-}
+};
 
-function loadShader(gl, type, source) {
+// In our HTML page, there should be a canvas with ID 'canvas'.
+const canvas = document.getElementById('canvas');
+const gl = canvas.getContext('webgl');
+if (!gl) throw 'WebGL not supported here';
+
+// Create a 'program' with a vertex shader and a fragment shader.
+const program = gl.createProgram();
+const loadShader = function(gl, type, source) {
 	const shader = gl.createShader(type);
 	gl.shaderSource(shader, source);
 	gl.compileShader(shader);
 	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-		throw "Compile error: " + gl.getShaderInfoLog(shader);
+		throw 'Compile error: ' + gl.getShaderInfoLog(shader);
 	}
 	return shader;
+};
+gl.attachShader(program, loadShader(gl, gl.VERTEX_SHADER, `
+	attribute vec2 a_position;	// clip space [-1, +1]
+	varying vec2 v_texCoord;
+	void main() {
+		gl_Position = vec4(a_position, 0.0, 1.0);
+		v_texCoord = (a_position + 1.0) * 0.5;	// texel coordinates [0, 1]
+	}
+`));
+gl.attachShader(program, loadShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource));
+gl.linkProgram(program);
+if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+	throw 'Link error: ' + gl.getProgramInfoLog(program);
 }
 
+// 'Attributes' and 'uniforms' are used to pass parameters into the shaders.
+// Each one has a unique number called a 'location'. Collecting those here.
+const locations = {
+	attribute: function(name) {
+		this[name] = gl.getAttribLocation(program, name);
+	},
+	uniform: function(name) {
+		this[name] = gl.getUniformLocation(program, name);
+	}
+};
+locations.uniform('u_center');
+locations.uniform('u_position');
+locations.uniform('u_rotate');
+locations.uniform('u_scale');
+locations.uniform('u_detail');
+locations.uniform('u_seabed');
+locations.attribute('a_position');
+
+// Prepare the vertex shader with a buffer containing 6 vertices (2 triangles).
+const vertexShader = {
+	positionBuffer: gl.createBuffer(),
+	draw: function(positionLocation) {
+		gl.enableVertexAttribArray(positionLocation);
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+		gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+		gl.drawArrays(gl.TRIANGLES, 0, 6);
+	}
+};
+gl.bindBuffer(gl.ARRAY_BUFFER, vertexShader.positionBuffer);
+gl.bufferData(
+	gl.ARRAY_BUFFER,
+	new Float32Array([ -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1 ]),
+	gl.STATIC_DRAW);
+
+// Canvas size will always follow window size.
 (window.onresize = function() {
 	canvas.width = window.innerWidth;
 	canvas.height = window.innerHeight;
 })();
 
+// Keyboard controls.
 window.onkeydown = function(e) {
 	switch (e.keyCode) {
-		case 37: move(-8, 0); break;	// left
-		case 38: move(0, 8); break;	// up
-		case 39: move(8, 0); break;	// right
-		case 40: move(0, -8); break;	// down
-		case 81: turn(355); break;	// Q = rotate left
-		case 87: turn(5); break;	// W = rotate right
-		case 65: scale /= 1.0625; break;	// A = zoom in
-		case 90: scale *= 1.0625; break;	// Z = zoom out
-		case 83: if (detail > 0) detail -= 1; break;	// S = more detail
-		case 88: if (detail < 16) detail += 1; break;	// X = less detail
-		//case 66: seabed = !seabed; break;	// B = toggle seabed
+		case 37: current.move(-8, 0); break;	// left
+		case 38: current.move(0, 8); break;	// up
+		case 39: current.move(8, 0); break;	// right
+		case 40: current.move(0, -8); break;	// down
+		case 81: current.turn(355); break;	// Q = rotate left
+		case 87: current.turn(5); break;	// W = rotate right
+		case 65: current.scale /= 1.0625; break;	// A = zoom in
+		case 90: current.scale *= 1.0625; break;	// Z = zoom out
+		case 83: current.moreDetail(); break;	// S = more detail
+		case 88: current.lessDetail(); break;	// X = less detail
+		case 66: current.seabed = !current.seabed; break;	// B = toggle seabed
 		//case 67: crosshair = !crosshair; break;	// C = toggle crosshair
 		case 72: toggleDialog('help'); break;	// H = toggle help
 		case 73: toggleDialog('info'); break;	// I = toggle info
 	}
 };
 
-function move(dx, dy) {
-	current = pixel({x:dx, y:dy});
-}
-
-function turn(degrees) {
-	const rad = (rotation = (rotation + degrees) % 360) * Math.PI / 180;
-	cos = Math.cos(rad);
-	sin = Math.sin(rad);
-}
-
-function pixel(p) {
-	return {
-		x: current.x + scale * (p.x * cos + p.y * sin),
-		y: current.y + scale * (-p.x * sin + p.y * cos)
-	};
-}
-
+// Measuring frames per second.
 const framerate = {
 	minDuration: 400,
 	rate: 0,
@@ -240,50 +258,25 @@ const framerate = {
 	}
 };
 
+// Animation loop.
 (function loop(time) {
 	requestAnimationFrame(loop);
 
-	// TODO: get locations should be done in init, not render
-	// TODO: clean up the mess once everything works
-	//const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-	//if (status != gl.FRAMEBUFFER_COMPLETE) {
-	//	throw "Framebuffer incomplete: " + status + " / " + gl.FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
-	//}
-	gl.bindTexture(gl.TEXTURE_2D, texture);	// source = pipe from previous shader
-	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-	gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);	// destination = pipe to next shader
-	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-	gl.bindTexture(gl.TEXTURE_2D, null);	// source = none
 	gl.viewport(0, 0, canvas.width, canvas.height);
 	gl.useProgram(program);
-	gl.uniform2f(gl.getUniformLocation(program, "u_center"), canvas.width / 2, canvas.height / 2);
-	gl.uniform2f(gl.getUniformLocation(program, "u_position"), current.x, current.y);
-	gl.uniform2f(gl.getUniformLocation(program, "u_rotate"), cos, sin);
-	gl.uniform1f(gl.getUniformLocation(program, "u_scale"), scale);
-	gl.uniform1i(gl.getUniformLocation(program, "u_detail"), detail);
+	gl.uniform2f(locations.u_center, canvas.width / 2, canvas.height / 2);
+	gl.uniform2f(locations.u_position, current.x, current.y);
+	gl.uniform2f(locations.u_rotate, current.cos, current.sin);
+	gl.uniform1f(locations.u_scale, current.scale);
+	gl.uniform1i(locations.u_detail, current.detail);
+	gl.uniform1i(locations.u_seabed, current.seabed);
 
-	const positionLocation = gl.getAttribLocation(program, 'a_position');
-	gl.enableVertexAttribArray(positionLocation);
-	gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-	gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
-	gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-	gl.bindFramebuffer(gl.FRAMEBUFFER, null);	// destination = canvas
-	gl.bindTexture(gl.TEXTURE_2D, texture);	// source = pipe from previous shader
-	gl.viewport(0, 0, canvas.width, canvas.height);
-	gl.useProgram(program2);
-	gl.uniform2f(gl.getUniformLocation(program2, "u_resolution"), canvas.width, canvas.height);
-	gl.uniform1f(gl.getUniformLocation(program2, "u_scale"), scale);
-
-	const positionLocation2 = gl.getAttribLocation(program2, 'a_position');
-	gl.enableVertexAttribArray(positionLocation2);
-	gl.vertexAttribPointer(positionLocation2, 2, gl.FLOAT, false, 0, 0);
-	gl.drawArrays(gl.TRIANGLES, 0, 6);
+	vertexShader.draw(locations.a_position);
 
 	setInfo('center', format(current.x, 0) + ', ' + format(current.y, 0));
-	setInfo('rotation', rotation);
-	setInfo('scale', format(scale, 3));
-	setInfo('detail', detail);
+	setInfo('rotation', current.rotation);
+	setInfo('scale', format(current.scale, 3));
+	setInfo('detail', current.detail);
 	setInfo('pixels', canvas.width * canvas.height);
 	setInfo('fps', framerate.fps(time).toFixed(0));
 })(0);
