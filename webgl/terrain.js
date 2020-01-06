@@ -234,9 +234,9 @@ window.onkeydown = function(e) {
 		case 83: current.moreDetail(); break;	// S = more detail
 		case 88: current.lessDetail(); break;	// X = less detail
 		case 66: current.seabed = !current.seabed; break;	// B = toggle seabed
-		//case 67: crosshair = !crosshair; break;	// C = toggle crosshair
-		case 72: toggleDialog('help'); break;	// H = toggle help
-		case 73: toggleDialog('info'); break;	// I = toggle info
+		case 67: toggleDisplay('crosshair'); break;	// C = toggle crosshair
+		case 72: toggleDisplay('help'); break;	// H = toggle help
+		case 73: toggleDisplay('info'); break;	// I = toggle info
 	}
 };
 
@@ -285,7 +285,7 @@ function format(n, prec) {
 	return (n * (1 << 17)).toFixed(prec);
 }
 
-function toggleDialog(id) {
+function toggleDisplay(id) {
 	const style = document.getElementById(id).style;
 	style.display = style.display == 'none' ? 'block' : 'none';
 }
