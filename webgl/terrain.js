@@ -50,71 +50,51 @@ void main() {
 	mat2 unrotate = mat2(u_rotate.x, u_rotate.y, -u_rotate.y, u_rotate.x);
 	vec2 position = skew * (u_position + rotate * u_scale * (gl_FragCoord.xy - u_center));
 	vec2 internal;
-	float near = 0.0;
-	float far = 0.0;
-	float corner = 0.0;
-	float divisor = 1.0;
+	vec3 heights = vec3(0.0);	// x = near corner, y = far corner, z = left/right corner
 	for (int depth = 0; depth < 17; depth++) {
-		divisor /= 2.0;
-		vec2 cell = floor(position / divisor);
+		position *= 2.0;
+		vec2 cell = floor(position);
 		vec2 anchor = mod(cell, 2.0);
 		// Subdivision: like 'simplicial subdivision' in simplex noise.
-		internal = mod(position, divisor);
+		internal = position - cell;
 		float subdivision = step(internal.x, internal.y);
 
 		// Reduce the current triangle to 1/4 (half its width).
 		// At the same time, double the contribution of all previous iterations.
-		if (anchor.x == anchor.y) {
-			float d = anchor.x == 0.0 ? near : far;
-			near += d;
-			far += d;
-			corner += d;
-		}
-		else {
-			float center = near + far;
-			near += corner;
-			far += corner;
-			if (subdivision == anchor.x) {
-				corner = center;
-			}
-			else {
-				corner += corner;
-			}
-		}
-		// Randomly put 'peaks' on the triangle's vertices
-		if (depth < u_detail) {
-			near += hash(cell.x, cell.y, depth);
-			far += hash(cell.x + 1.0, cell.y + 1.0, depth);
-			corner += subdivision != 0.0
-				? hash(cell.x, cell.y + 1.0, depth)
-				: hash(cell.x + 1.0, cell.y, depth);
-		}
-		else {
-			near += 0.5;
-			far += 0.5;
-			corner += 0.5;
-		}
+		heights += anchor.x == anchor.y
+			? vec3(anchor.x == 0.0 ? heights.x : heights.y)
+			: vec3(
+				heights.zz,
+				subdivision == anchor.x
+					? heights.x + heights.y - heights.z
+					: heights.z);
+
+		// Pseudo-randomly put 'peaks' on the triangle's vertices.
+		heights += depth >= u_detail
+			? vec3(0.5)
+			: vec3(
+				hash(cell.x, cell.y, depth),
+				hash(cell.x + 1.0, cell.y + 1.0, depth),
+				subdivision != 0.0
+					? hash(cell.x, cell.y + 1.0, depth)
+					: hash(cell.x + 1.0, cell.y, depth));
 	}
 
 	// Interpolate between the vertices of the final (small) triangle.
 	vec2 slope = internal.x > internal.y
-		? vec2(corner - near, far - corner)
-		: vec2(far - corner, corner - near);
+		? vec2(heights.z - heights.x, heights.y - heights.z)
+		: vec2(heights.y - heights.z, heights.z - heights.x);
 	vec3 normal = normalize(vec3(unrotate * unskew * -slope, 1.0));
-	float height = near * divisor + dot(internal, slope);
+	float height = heights.x + dot(internal, slope);
 
 	// Colors, shaded.
-	vec3 rgb;
-	if (u_seabed || height > 0.6942749) {
-		rgb = clamp(mix(0.5, 1.0, dot(normal, sun)) * (
-			height > 0.95 ? snow :
-			height > 0.84 ? rocks :
-			height > 0.696 ? land :
-			height > 0.6942749 ? beach : sea), 0.0, 1.0);
-	}
-	else {
-		rgb = sea;
-	}
+	vec3 rgb = !u_seabed && height < 91000.0
+		? sea
+		: clamp(mix(0.5, 1.0, dot(normal, sun)) * (
+			height < 91000.0 ? sea :
+			height < 91200.0 ? beach :
+			height < 110000.0 ? land :
+			height < 125000.0 ? rocks : snow), 0.0, 1.0);
 	gl_FragColor = vec4(rgb, 1.0);
 }
 `;
