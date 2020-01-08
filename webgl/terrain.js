@@ -6,6 +6,13 @@ const fragmentShaderSource = `
 
 precision lowp float;
 
+#if __VERSION__ == 300
+precision highp int;
+#define attribute in
+#define gl_FragColor FragColor
+out vec4 gl_FragColor;
+#endif
+
 uniform vec2 u_center;	// pixel coordinates
 uniform vec2 u_position;	// terrain coordinates
 uniform vec2 u_rotate;	// (cos, sin)
@@ -27,17 +34,27 @@ const vec3 sea = vec3(0.0, 0.5, 0.75);
 const mat2 skew = mat2(1.3660254, 0.3660254, 0.3660254, 1.3660254);
 const mat2 unskew = mat2(0.7886751, -0.2113249, -0.2113249, 0.7886751);
 
-// Identical to (bitCount(n) & 1) in higher versions of GLSL
-// (assuming its integers are wide enough).
 float parity(float n) {
-	float p = 0.0;
 	n = floor(n);
 	if (n < 0.0) n = -1.0 - n;
+#if __VERSION__ == 300
+	// Bitwise is faster than floats.
+	// bitCount would be even faster; but not yet supported by OpenGL ES.
+	uint k = uint(n);
+	k ^= k >> 16;
+	k ^= k >> 8;
+	k ^= k >> 4;
+	k ^= k >> 2;
+	k ^= k >> 1;
+	return float(k & 1u);
+#else
+	float p = 0.0;
 	for (int i = 0; i < 32; i++) {
 		p += n;
 		n = floor(n / 2.0);
 	}
 	return mod(p, 2.0);
+#endif
 }
 
 // One-bit pseudo-random value.
@@ -103,6 +120,9 @@ void main() {
 // JavaScript code
 // ------------------------------------
 
+const version = window.location.hash == '#1' ? '#version 100' : '#version 300 es';
+setInfo('version', version);
+
 const current = {
 	x: 0,
 	y: 0,
@@ -132,14 +152,14 @@ const current = {
 
 // In our HTML page, there should be a canvas with ID 'canvas'.
 const canvas = document.getElementById('canvas');
-const gl = canvas.getContext('webgl');
+const gl = canvas.getContext('webgl2');
 if (!gl) throw 'WebGL not supported here';
 
 // Create a 'program' with a vertex shader and a fragment shader.
 const program = gl.createProgram();
 const loadShader = function(gl, type, source) {
 	const shader = gl.createShader(type);
-	gl.shaderSource(shader, source);
+	gl.shaderSource(shader, version + source);
 	gl.compileShader(shader);
 	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
 		throw 'Compile error: ' + gl.getShaderInfoLog(shader);
@@ -147,11 +167,15 @@ const loadShader = function(gl, type, source) {
 	return shader;
 };
 gl.attachShader(program, loadShader(gl, gl.VERTEX_SHADER, `
+#if __VERSION__ == 300
+#define attribute in
+#define varying out
+#endif
 	attribute vec2 a_position;	// clip space [-1, +1]
-	varying vec2 v_texCoord;
+	varying vec2 v_texCoord;	// texel coordinates [0, 1]
 	void main() {
 		gl_Position = vec4(a_position, 0.0, 1.0);
-		v_texCoord = (a_position + 1.0) * 0.5;	// texel coordinates [0, 1]
+		v_texCoord = (a_position + 1.0) * 0.5;
 	}
 `));
 gl.attachShader(program, loadShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource));
