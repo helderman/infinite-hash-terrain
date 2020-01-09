@@ -120,9 +120,6 @@ void main() {
 // JavaScript code
 // ------------------------------------
 
-const version = window.location.hash == '#1' ? '#version 100' : '#version 300 es';
-setInfo('version', version);
-
 const current = {
 	x: 0,
 	y: 0,
@@ -150,10 +147,15 @@ const current = {
 	}
 };
 
+const ver1 = window.location.hash == '#1';
+const version = ver1 ? '#version 100' : '#version 300 es';
+const contextType = ver1 ? 'webgl' : 'webgl2';
+setInfo('version', version);
+
 // In our HTML page, there should be a canvas with ID 'canvas'.
 const canvas = document.getElementById('canvas');
-const gl = canvas.getContext('webgl2');
-if (!gl) throw 'WebGL not supported here';
+const gl = canvas.getContext(contextType);
+if (!gl) throw contextType + ' not supported here';
 
 // Create a 'program' with a vertex shader and a fragment shader.
 const program = gl.createProgram();
