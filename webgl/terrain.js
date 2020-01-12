@@ -8,7 +8,6 @@ precision lowp float;
 
 #if __VERSION__ == 300
 precision highp int;
-#define attribute in
 #define gl_FragColor FragColor
 out vec4 gl_FragColor;
 #endif
@@ -128,7 +127,7 @@ const current = {
 	sin: 0.0,
 	scale: 1 / (1 << 14),	// yes, the terrain coordinates are tiny!
 	detail: 17,
-	seabed: false,	// makes sea surface transparent (false) or opaque (true)
+	seabed: false,	// makes sea surface opaque (false) or transparent (true)
 
 	move: function (dx, dy) {
 		this.x += this.scale * (dx * this.cos + dy * this.sin);
